@@ -79,6 +79,86 @@ env.close()
 env = gym.make("QubitCalibration-v0", config={"max_steps": 100})
 ```
 
+## Coding Agents as Calibration Agents
+
+Beyond RL, this gym supports a newer paradigm: **coding agents** (LLM-based agents
+that can reason and call tools) as scientific experimenters.  The idea is simple —
+give the agent an HTTP API to a hidden qubit and a budget of 30 calls, then let it
+design and execute its own calibration protocol.
+
+```
+┌─────────────────────────┐        HTTP        ┌──────────────────────────┐
+│   Coding Agent          │◄──────────────────►│  quantum_cal_gym/server  │
+│  (Claude Code, GPT-4o…) │  POST /session/run  │  FastAPI + TransmonSim   │
+│                         │  POST /session/sub  │  EpisodeLogger           │
+└─────────────────────────┘                     └──────────────────────────┘
+         reasons, plans,                           true params hidden;
+         fits curves,                              plots + log.json saved
+         adapts strategy                           to runs/server_sessions/
+```
+
+The agent never sees the simulator source or the true parameters.
+It only observes the JSON signal data returned by each experiment call —
+exactly the information a real experimentalist would have.
+
+### Why this is interesting
+
+- **Coding agents generalise differently from RL agents.** They bring physics
+  knowledge, curve-fitting intuition, and adaptive planning from pretraining —
+  without any task-specific training.
+- **The gym becomes an evaluation benchmark.** How many parameters can an agent
+  calibrate in 30 shots?  Does it zoom in on resonances?  Does it set Ramsey
+  detuning correctly?
+- **The interface is minimal by design.** The server exposes only signal data.
+  The agent must reason about physics from first principles.
+
+### Quick setup
+
+**Terminal 1 — start the hidden-qubit server:**
+
+```bash
+cd quantum-cal-gym
+uvicorn quantum_cal_gym.server:app --port 8765
+```
+
+**Terminal 2 — run Claude Code as the agent** (requires a separate workspace so
+the agent has no access to the gym source):
+
+```bash
+# one-time setup
+git clone https://github.com/Osgood001/qcal-agent ~/qcal-agent
+# or: mkdir ~/qcal-agent && cp docs/CLAUDE_AGENT.md ~/qcal-agent/CLAUDE.md
+
+cd ~/qcal-agent
+claude          # Claude Code reads CLAUDE.md and starts calibrating
+```
+
+Claude Code will autonomously create a session, run experiments, analyse the
+returned JSON, and submit its final estimates.  Watch its reasoning live in the
+TUI.
+
+### What gets saved
+
+After each experiment, `runs/server_sessions/{sid}/` contains:
+
+| File | Contents |
+|------|----------|
+| `step_NNN_<exp>.png` | Signal curve with true-value marker + IQ plane panel |
+| `log.json` | Structured record of every call (exp type, params, signal summary) |
+| `progress.png` | Experiment timeline regenerated after each step |
+
+These are produced by the same `EpisodeLogger` used by the Gymnasium env —
+no separate logging infrastructure needed.
+
+### Headless / scripted mode
+
+For automated benchmarking, `examples/cal_agent_harness.py` spawns Claude Code
+non-interactively and scores the result:
+
+```bash
+python examples/cal_agent_harness.py --seed 42
+```
+
 ## Project Structure
 
 ```
@@ -88,8 +168,14 @@ quantum-cal-gym/
     cal_env.py           # QubitCalibrationEnv class
     qubit_sim.py         # Transmon qubit physics simulator
     mock_quark.py        # Drop-in stub for the lab quark SDK
+    server.py            # FastAPI server for coding-agent sessions
+    logger.py            # EpisodeLogger: per-step plots + log.json
   examples/
-    random_agent.py      # Smoke test / demo
+    random_agent.py      # RL smoke test / demo
+    run_exp.py           # CLI experiment runner (used by headless harness)
+    cal_agent_harness.py # Spawn + score Claude Code as a calibration agent
+  docs/
+    report.md            # Technical report (Chinese, with physics derivations)
   pyproject.toml
   logo.svg
 ```
@@ -145,6 +231,9 @@ Inspired by [fib-gym](https://github.com/Osgood001/fib-gym), [ChemGymRL](https:/
 ## Roadmap
 
 - [x] `QubitCalibration-v0` — single-qubit, 6 experiment types
+- [x] Physics backend — scqubits (EJ/EC→f_q) + QuTiP Lindblad solver
+- [x] FastAPI server + `EpisodeLogger` for coding-agent sessions
+- [x] Claude Code calibration agent (`examples/cal_agent_harness.py`)
 - [ ] Flux-tunable qubit (f_q vs bias curve)
 - [ ] Two-qubit experiments (CZ, iSWAP)
 - [ ] Real hardware backend via `quark` SDK
