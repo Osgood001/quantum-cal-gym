@@ -42,7 +42,14 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"],
 BUDGET_MAX = 30
 PLOT_DIR   = Path(__file__).parent.parent / "runs" / "server_sessions"
 
-# session_id → {qubit, budget, plots}
+# ── Qubit loaded once at startup — represents the sample in the fridge ────────
+
+from quantum_cal_gym.qubit_sim import TransmonSim as _TransmonSim
+_seed  = random.randint(0, 2**31 - 1)
+_qubit = _TransmonSim(seed=_seed)
+print(f"[server] Qubit loaded  (seed={_seed}). Parameters hidden.")
+
+# session_id → {budget, plots, logger}
 _sessions: dict[str, dict[str, Any]] = {}
 
 
@@ -70,7 +77,7 @@ def _record_step(sid: str, step: int, exp: str,
         "n_calibrated": 0,
         "calibrated":   [],
         "estimates":    {},
-        "true_params":  _sessions[sid]["qubit"].true_params,  # server-side only
+        "true_params":  _qubit.true_params,  # server-side only
     }
     logger = _sessions[sid]["logger"]
     logger.record(step, obs, reward=0.0, info=info)
@@ -85,18 +92,16 @@ def _tof(arr) -> list[float]:
 # ── Session endpoints ─────────────────────────────────────────────────────────
 
 @app.post("/session", summary="Create a new calibration session")
-def new_session(seed: int | None = None):
+def new_session():
     """
-    Create a new qubit instance with random (or specified) parameters.
+    Open a new calibration session on the loaded qubit.
     Returns a `session_id` you must pass to all subsequent calls.
     The true parameters are hidden inside the server.
+    Restart the server to load a different qubit.
     """
-    from quantum_cal_gym.qubit_sim import TransmonSim
-    sid  = uuid.uuid4().hex[:8]
-    seed = seed if seed is not None else random.randint(0, 2**31 - 1)
-    q    = TransmonSim(seed=seed)
-    log  = EpisodeLogger(str(PLOT_DIR / sid), verbose=True)
-    _sessions[sid] = {"qubit": q, "budget": 0, "plots": [], "logger": log}
+    sid = uuid.uuid4().hex[:8]
+    log = EpisodeLogger(str(PLOT_DIR / sid), verbose=True)
+    _sessions[sid] = {"budget": 0, "plots": [], "logger": log}
     return {
         "session_id":   sid,
         "budget_total": BUDGET_MAX,
@@ -144,7 +149,7 @@ def run_experiment(sid: str, req: RunRequest):
                             detail=f"Budget exhausted ({BUDGET_MAX} experiments used). "
                                    "Submit your estimates now.")
 
-    q    = s["qubit"]
+    q    = _qubit
     exp  = req.experiment.lower()
     step = s["budget"] + 1
     n    = 64
@@ -285,8 +290,7 @@ def submit(sid: str, est: Estimates):
     Reveals the true values only after submission.
     """
     s  = _get(sid)
-    q  = s["qubit"]
-    tp = q.true_params
+    tp = _qubit.true_params
 
     estimates = est.model_dump()
     report    = {}

@@ -22,8 +22,10 @@ Determine all 6 parameters within 5% relative error before your budget runs out.
 
 Base URL: `http://localhost:8765`
 
-The server holds the hidden qubit. **True parameters are never returned by any
-endpoint** until you submit your final estimates.
+The server holds the hidden qubit — a single fixed device loaded when the
+server started, like a sample sitting in a dilution refrigerator. **True
+parameters are never returned by any endpoint** until you submit your final
+estimates. To get a different qubit, the server must be restarted.
 
 Use `curl` or Python `httpx`/`requests` for all API calls.
 
@@ -35,7 +37,7 @@ Use `curl` or Python `httpx`/`requests` for all API calls.
 POST /session
 ```
 
-Optional query param: `?seed=<int>` (omit for random qubit).
+Opens a new calibration attempt on the loaded qubit (budget resets to 30).
 
 Response:
 ```json
