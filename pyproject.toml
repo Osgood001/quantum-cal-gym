@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "quantum-cal-gym"
+version = "0.1.0"
+description = "Gymnasium environment for autonomous superconducting qubit calibration"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+dependencies = [
+    "gymnasium>=0.29",
+    "numpy>=1.24",
+]
+
+[project.urls]
+Homepage = "https://github.com/Osgood001/quantum-calibration"
+
+[tool.setuptools.packages.find]
+include = ["quantum_cal_gym*"]
