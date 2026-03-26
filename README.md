@@ -33,6 +33,9 @@ The gym supports **two agent paradigms**:
 > Run Claude Code (or any LLM agent) as a blind calibration scientist.
 > The agent gets an HTTP API and 30 experiment calls. True parameters are hidden.
 
+<img width="1881" height="1139" alt="image" src="https://github.com/user-attachments/assets/4d8c9f46-4c3d-4a9f-9ce1-3621fd522fc0" />
+
+
 **Terminal 1 — start the qubit server:**
 
 ```bash
