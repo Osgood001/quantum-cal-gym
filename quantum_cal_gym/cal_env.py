@@ -116,7 +116,8 @@ class QubitCalibrationEnv(gym.Env):
         amp     = float(max(action[3], 0.01))
         delay_f = float(action[4])
 
-        x_norm, signal = self._run_experiment(exp, sweep_c, sweep_s, amp, delay_f)
+        x_norm, signal, x_phys, x_label, y_label = self._run_experiment(
+            exp, sweep_c, sweep_s, amp, delay_f)
 
         prev_cal = len(self._calibrated)
         self._analyse(exp, x_norm, signal, sweep_c, delay_f)
@@ -132,10 +133,14 @@ class QubitCalibrationEnv(gym.Env):
 
         obs  = self._make_obs(x_norm, signal)
         info = {
-            'exp_type':    exp,
-            'calibrated':  list(self._calibrated),
+            'exp_type':     exp,
+            'calibrated':   list(self._calibrated),
             'n_calibrated': new_cal,
-            'estimates':   dict(self._estimates),
+            'estimates':    dict(self._estimates),
+            'true_params':  self._qubit.true_params,   # ground truth for logging/debug
+            'x_phys':       x_phys,                    # physical-unit x axis
+            'x_label':      x_label,
+            'y_label':      y_label,
         }
         return obs, reward, terminated, False, info
 
@@ -152,38 +157,56 @@ class QubitCalibrationEnv(gym.Env):
             f_s   = sweep_s * (FREQ_SPAN_MAX - FREQ_SPAN_MIN) + FREQ_SPAN_MIN
             freqs = np.linspace(f_c - f_s / 2, f_c + f_s / 2, N_POINTS)
             signal = q.s21(freqs) if exp == 's21' else q.spectrum(freqs, amp=amp * 0.8 + 0.2)
-            x_norm = (freqs - FREQ_LO) / (FREQ_HI - FREQ_LO)
+            x_norm  = (freqs - FREQ_LO) / (FREQ_HI - FREQ_LO)
+            x_phys  = freqs / 1e9          # GHz
+            x_label = 'Probe Frequency (GHz)' if exp == 's21' else 'Drive Frequency (GHz)'
+            y_label = '|S₂₁| (arb. u.)'   if exp == 's21' else '|signal| (arb. u.)'
 
         elif exp == 'power_rabi':
-            amp_max = amp * AMP_PI_RANGE[1] * 2.5   # generous range
+            amp_max = amp * AMP_PI_RANGE[1] * 2.5
             amps    = np.linspace(0, amp_max, N_POINTS)
             signal  = q.power_rabi(amps)
             x_norm  = amps / (AMP_PI_RANGE[1] * 2.5)
+            x_phys  = amps
+            x_label = 'Drive Amplitude (arb. u.)'
+            y_label = 'Population'
 
         elif exp == 'time_rabi':
-            t_max  = max(delay_f, 0.01) * 500e-9    # up to 500 ns
+            t_max  = max(delay_f, 0.01) * 500e-9
             times  = np.linspace(0, t_max, N_POINTS)
             signal = q.time_rabi(times)
             x_norm = times / 500e-9
+            x_phys = times * 1e9          # ns
+            x_label = 'Drive Duration (ns)'
+            y_label = 'Population'
 
         elif exp == 't1':
             t_max  = max(delay_f, 0.02) * TIME_MAX
             times  = np.linspace(0, t_max, N_POINTS)
             signal = q.t1_decay(times)
             x_norm = times / TIME_MAX
+            x_phys = times * 1e6          # µs
+            x_label = 'Delay (µs)'
+            y_label = 'Population'
 
         elif exp == 'ramsey':
             t_max    = max(delay_f, 0.02) * TIME_MAX
             times    = np.linspace(0, t_max, N_POINTS)
-            detuning = sweep_c * 20e6              # 0–20 MHz
+            detuning = sweep_c * 20e6
             signal   = q.ramsey(times, detuning=detuning)
             x_norm   = times / TIME_MAX
+            x_phys   = times * 1e6        # µs
+            x_label  = 'Free Evolution (µs)'
+            y_label  = 'Population'
 
         else:
-            x_norm = np.linspace(0.0, 1.0, N_POINTS)
-            signal = np.zeros(N_POINTS, dtype=complex)
+            x_norm  = np.linspace(0.0, 1.0, N_POINTS)
+            x_phys  = x_norm.copy()
+            signal  = np.zeros(N_POINTS, dtype=complex)
+            x_label = 'x'
+            y_label = 'signal'
 
-        return x_norm.astype(np.float32), signal
+        return x_norm.astype(np.float32), signal, x_phys.astype(np.float32), x_label, y_label
 
     # ── Parameter analysis ────────────────────────────────────────────────────
 
