@@ -147,7 +147,7 @@ $$\frac{1}{T_2^*} = \frac{1}{2T_1} + \frac{1}{T_\varphi}$$
 **模型：**
 $$|S_{21}(f)|\ \text{（dB）} = 20\log_{10}\left|1 - \frac{Q/Q_e}{1 + 2iQ(f-f_r)/f_r}\right|$$
 
-**示例图：** 见图 [step_035_s21.png](figs/step_035_s21.png)
+![S21 谐振腔传输示例](figs/step_035_s21.png)
 
 > **注意：** 当谐振腔品质因子 $Q \sim 10^3$–$10^4$ 时，线宽 $\kappa \sim$ 几百 kHz 至几 MHz，随机宽频扫描下谐振峰可能被噪声淹没。实际操作中应在估计频率附近进行窄频精扫。
 
@@ -160,7 +160,7 @@ $$S(f) = 1 - A \cdot \frac{(\Gamma/2)^2}{(f - f_q)^2 + (\Gamma/2)^2}$$
 
 其中 FWHM 线宽 $\Gamma = 1/(\pi T_2^*)$。
 
-**示例图：** 见图 [step_018_spectrum.png](figs/step_018_spectrum.png)
+![量子比特谱示例](figs/step_018_spectrum.png)
 
 ### 4.3 功率 Rabi（PowerRabi）
 
@@ -169,7 +169,7 @@ $$S(f) = 1 - A \cdot \frac{(\Gamma/2)^2}{(f - f_q)^2 + (\Gamma/2)^2}$$
 **模型：**
 $$P_{|1\rangle}(A) = \frac{1 - \cos(\pi A / A_\pi)}{2} = \sin^2\!\left(\frac{\pi A}{2 A_\pi}\right)$$
 
-**示例图：** 见图 [step_013_power_rabi.png](figs/step_013_power_rabi.png)
+![PowerRabi 示例](figs/step_013_power_rabi.png)
 
 ### 4.4 时间 Rabi（TimeRabi）
 
@@ -181,7 +181,7 @@ $$\hat{H} = \frac{\Omega}{2}\hat{\sigma}_x, \quad \Omega = \frac{\pi}{t_\pi}$$
 
 塌缩算符：$\sqrt{\gamma_1}\,\hat{\sigma}^-$（弛豫）和 $\sqrt{\gamma_\varphi/2}\,\hat{\sigma}_z$（纯退相干）。
 
-**示例图：** 见图 [step_025_time_rabi.png](figs/step_025_time_rabi.png)
+![TimeRabi 示例](figs/step_025_time_rabi.png)
 
 ### 4.5 T1 弛豫测量
 
@@ -191,7 +191,7 @@ $$\hat{H} = \frac{\Omega}{2}\hat{\sigma}_x, \quad \Omega = \frac{\pi}{t_\pi}$$
 
 $$P_{|1\rangle}(t) = \langle 1 | \rho(t) | 1 \rangle = e^{-t/T_1}$$
 
-**示例图：** 见图 [step_005_t1.png](figs/step_005_t1.png)
+![T1 衰减示例](figs/step_005_t1.png)
 
 本次仿真结果：真实 $T_1 = 195.4\ \mu\text{s}$，智能体估计 $202.5\ \mu\text{s}$，相对误差 3.6%，**成功标定**（误差阈值 5%）。
 
@@ -209,7 +209,7 @@ $$S(t) = A \cdot e^{-t/(2T_1) - t^2/T_{2r}^2} \cdot \cos(2\pi \Delta f \cdot t +
 
 这是区别于简单指数退相干的关键物理细节，也是本仿真与 Ctoolbox 对齐的核心之处。
 
-**示例图：** 见图 [step_019_ramsey.png](figs/step_019_ramsey.png)
+![Ramsey 干涉示例](figs/step_019_ramsey.png)
 
 ---
 
