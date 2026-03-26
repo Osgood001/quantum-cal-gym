@@ -1,38 +1,41 @@
 """
 mock_quark — Drop-in stub for the proprietary ``quark`` SDK.
 
-Mirrors the API patterns used in the lab notebooks:
+Mirrors the API patterns used in the lab notebooks and Ctoolbox:
     from quark.app import Recipe, s, get_data_by_rid
 
-This module connects ``quark``-style experiment code to the
-``SuperconductingQubit`` simulator so notebook experiments can be
-tested offline without lab hardware.
+Result format is Ctoolbox-compatible:
+    result['data'][signal]           — IQ data array
+    result['meta']['axis'][ax_name]  — sweep axis dict
+    result['meta']['other']          — qubit list, signal name, …
 
 Usage
 -----
     from quantum_cal_gym.mock_quark import install
-    install()   # monkey-patches sys.modules so ``from quark.app import ...`` works
+    install()   # patches sys.modules so lab notebook code works offline
 
-Or use it standalone:
+Or standalone:
     from quantum_cal_gym.mock_quark import s, Recipe
 """
 from __future__ import annotations
 
 import sys
+import time
 import types
 import numpy as np
 from typing import Any
 
-from .qubit_sim import SuperconductingQubit
+from .qubit_sim import TransmonSim
 
-# ── Global qubit instance (shared across all Recipe calls) ────────────────────
-_qubit: SuperconductingQubit | None = None
+# ── Module-level state ────────────────────────────────────────────────────────
+
+_qubit: TransmonSim | None = None
 _config_store: dict[str, Any] = {}
-_data_store: dict[int, Any] = {}
+_data_store:   dict[int, Any] = {}
 _rid_counter = 0
 
 
-def set_qubit(qubit: SuperconductingQubit):
+def set_qubit(qubit: TransmonSim):
     """Attach a simulator instance to the mock backend."""
     global _qubit
     _qubit = qubit
@@ -41,11 +44,34 @@ def set_qubit(qubit: SuperconductingQubit):
 def reset(seed=None):
     """Create a fresh random qubit and reset all stores."""
     global _qubit, _config_store, _data_store, _rid_counter
-    _qubit         = SuperconductingQubit(seed=seed)
-    _config_store  = {}
-    _data_store    = {}
-    _rid_counter   = 0
+    _qubit        = TransmonSim(seed=seed)
+    _config_store = {}
+    _data_store   = {}
+    _rid_counter  = 0
     return _qubit
+
+
+# ── TaskResult — mirrors quark's async task handle ───────────────────────────
+
+class TaskResult:
+    """
+    Returned by ``s.submit()``.  Mirrors the quark SDK's task object:
+
+        thistask = s.submit(rcp.export())
+        data = thistask.result()
+        rid  = thistask.rid
+    """
+
+    def __init__(self, rid: int, result_dict: dict):
+        self.rid      = rid
+        self._result  = result_dict
+
+    def result(self) -> dict:
+        """Return the Ctoolbox-format result dict."""
+        return self._result
+
+    def __repr__(self):
+        return f"<TaskResult rid={self.rid}>"
 
 
 # ── s object: mirrors quark.app.s ────────────────────────────────────────────
@@ -58,6 +84,7 @@ class _SessionProxy:
         s.login()
         s.query('Q0.R.frequency')
         s.update('Q0.R.frequency', 5.1e9)
+        s.submit(rcp.export())   → TaskResult
     """
 
     def login(self, *args, **kwargs):
@@ -71,6 +98,16 @@ class _SessionProxy:
     def update(self, key: str, value: Any):
         _config_store[key] = value
 
+    def submit(self, exported: dict) -> TaskResult:
+        """
+        Execute an exported recipe dict and return a TaskResult.
+
+        ``exported`` should be the dict returned by ``Recipe.export()``.
+        """
+        if _qubit is None:
+            reset()
+        return _run_exported(exported)
+
     def __repr__(self):
         return f"<mock quark session, {len(_config_store)} config keys>"
 
@@ -82,17 +119,17 @@ s = _SessionProxy()
 
 class Recipe:
     """
-    Simplified Recipe that maps circuit functions to simulator calls.
+    Simplified Recipe that maps named experiments to simulator calls.
 
-    Supported experiment names (matched by prefix):
-      S21, spectrum, Spectrum, PowerRabi, TimeRabi, T1, T2, Ramsey
+    Supported experiment names (matched by substring):
+        s21, spectrum, power_rabi, time_rabi, t1, ramsey
     """
 
-    def __init__(self, name: str, signal: str = "S21"):
-        self._name    = name
-        self._signal  = signal
+    def __init__(self, name: str, signal: str = "IQ"):
+        self._name   = name
+        self._signal = signal
         self._params: dict[str, Any] = {}
-        self.circuit  = None
+        self.circuit = None
 
     def __setitem__(self, key: str, value: Any):
         self._params[key] = value
@@ -100,103 +137,133 @@ class Recipe:
     def __getitem__(self, key: str) -> Any:
         return self._params.get(key)
 
-    def run(self, n_shots: int = 1) -> "RecipeResult":
-        """Execute the experiment on the simulator and return results."""
-        if _qubit is None:
-            raise RuntimeError("No qubit attached. Call mock_quark.reset() first.")
-        return _run_recipe(self)
+    def export(self) -> dict:
+        """Return a serialisable dict passed to ``s.submit()``."""
+        return {"name": self._name, "signal": self._signal,
+                "params": dict(self._params)}
 
-    def step(self, idx: int = 0):
-        """Return a dummy command dict (for preview/waveform inspection)."""
+    def run(self, n_shots: int = 1) -> TaskResult:
+        """Convenience: run immediately without s.submit."""
+        if _qubit is None:
+            reset()
+        return _run_exported(self.export())
+
+    def step(self, idx: int = 0) -> dict:
         return {"main": {}, "step": idx}
 
     def __repr__(self):
         return f"<Recipe '{self._name}' params={list(self._params.keys())}>"
 
 
-class RecipeResult:
-    def __init__(self, name: str, x: np.ndarray, y: np.ndarray, rid: int):
-        self.name  = name
-        self.x     = x      # sweep axis
-        self.y     = y      # complex IQ result
-        self.rid   = rid    # run id for data retrieval
+# ── Experiment dispatcher ─────────────────────────────────────────────────────
 
-    def __repr__(self):
-        return f"<RecipeResult '{self.name}' rid={self.rid} x={self.x.shape}>"
+def _run_exported(exported: dict) -> TaskResult:
+    """
+    Dispatch an exported recipe dict to the simulator and return a
+    Ctoolbox-compatible TaskResult.
 
-
-def _run_recipe(rcp: Recipe) -> RecipeResult:
+    Result format
+    -------------
+    result['data'][signal_name]   — np.ndarray, shape (n_pts, 1) complex
+    result['meta']['axis']        — {ax_key: {'def': array}}
+    result['meta']['other']       — {'signal': name, 'qubits': [q_name], ...}
+    """
     global _rid_counter
-    q    = _qubit
-    name = rcp._name.lower()
-    p    = rcp._params
+
+    q      = _qubit
+    name   = exported["name"].lower()
+    sig    = exported.get("signal", "IQ")
+    p      = exported.get("params", {})
+    qubit  = p.get("qubit", "Q0")
 
     # ── S21 ──────────────────────────────────────────────────────────────
-    if name == 's21':
-        freqs  = np.asarray(p.get('freq', np.linspace(q.f_r - 100e6, q.f_r + 100e6, 64)))
-        result = q.s21(freqs)
-        x      = freqs
+    if name == "s21":
+        freqs  = np.asarray(p.get("freq", np.linspace(q.f_r - 200e6, q.f_r + 200e6, 64)))
+        iq     = q.s21(freqs)
+        data   = {sig: iq[:, np.newaxis]}                # (n_pts, n_qubits)
+        axis   = {f"${qubit}.Measure.frequency": {"def": freqs}}
+        other  = {"signal": sig, "qubits": [qubit]}
 
-    # ── Qubit spectrum ────────────────────────────────────────────────────
-    elif 'spectrum' in name:
-        freqs  = np.asarray(p.get('freq', np.linspace(q.f_q - 50e6, q.f_q + 50e6, 64)))
-        amp    = float(p.get('amp', 0.5))
-        result = q.spectrum(freqs, amp=amp)
-        x      = freqs
+    # ── Spectrum ──────────────────────────────────────────────────────────
+    elif "spectrum" in name:
+        freqs  = np.asarray(p.get("freq", np.linspace(q.f_q - 100e6, q.f_q + 100e6, 64)))
+        amp    = float(p.get("amp", 0.5))
+        iq     = q.spectrum(freqs, amp=amp)
+        data   = {sig: iq[:, np.newaxis]}
+        axis   = {f"${qubit}.R.frequency": {"def": freqs}}
+        other  = {"signal": sig, "qubits": [qubit]}
 
     # ── PowerRabi ─────────────────────────────────────────────────────────
-    elif 'powerrabi' in name or name == 'power_rabi':
-        amps   = np.asarray(p.get('amp', np.linspace(0, 1.0, 64)))
-        result = q.power_rabi(amps)
-        x      = amps
+    elif "powerrabi" in name or name == "power_rabi":
+        amps   = np.asarray(p.get("amp", np.linspace(0.0, 1.2 * q.amp_pi, 64)))
+        iq     = q.power_rabi(amps)
+        data   = {sig: iq[:, np.newaxis]}
+        axis   = {f"${qubit}.R.amp": {"def": amps}}
+        other  = {"signal": sig, "qubits": [qubit]}
 
     # ── TimeRabi ──────────────────────────────────────────────────────────
-    elif 'timerabi' in name or name == 'time_rabi':
-        times  = np.asarray(p.get('width', np.linspace(0, 300e-9, 64)))
-        result = q.time_rabi(times)
-        x      = times
+    elif "timerabi" in name or name == "time_rabi":
+        widths = np.asarray(p.get("width", np.linspace(0.0, 3.0 * q.t_pi, 64)))
+        iq     = q.time_rabi(widths)
+        data   = {sig: iq[:, np.newaxis]}
+        axis   = {f"${qubit}.R.width": {"def": widths}}
+        other  = {"signal": sig, "qubits": [qubit]}
 
     # ── T1 ────────────────────────────────────────────────────────────────
-    elif name == 't1':
-        times  = np.asarray(p.get('delay', np.linspace(0, 200e-6, 64)))
-        result = q.t1_decay(times)
-        x      = times
+    elif name == "t1":
+        delays = np.asarray(p.get("delay", np.linspace(0.0, 3.0 * q.T1, 64)))
+        repeat = int(p.get("repeat", 1))
+        iq     = q.t1_decay(delays)
+        # T1 shape: (repeat, n_delay, n_qubits)
+        data   = {sig: np.tile(iq[:, np.newaxis], (1, 1))[np.newaxis, :, :].repeat(repeat, axis=0)}
+        axis   = {"delay": {"def": delays}}
+        other  = {"signal": sig, "qubits": [qubit], "echonum": 0}
 
     # ── Ramsey ────────────────────────────────────────────────────────────
-    elif 'ramsey' in name:
-        times    = np.asarray(p.get('delay', np.linspace(0, 50e-6, 64)))
-        detuning = float(p.get('detuning', 0.0))
-        result   = q.ramsey(times, detuning=detuning)
-        x        = times
+    elif "ramsey" in name:
+        delays   = np.asarray(p.get("delay", np.linspace(0.0, 5.0 * q.T2r, 64)))
+        detuning = float(p.get("detuning", 0.0))
+        iq       = q.ramsey(delays, detuning=detuning)
+        data     = {sig: iq[:, np.newaxis]}
+        axis     = {"delay": {"def": delays}}
+        other    = {"signal": sig, "qubits": [qubit], "echonum": 0}
 
     else:
-        x      = np.linspace(0, 1, 64)
-        result = np.zeros(64, dtype=complex)
+        n = 64
+        x  = np.linspace(0, 1, n)
+        iq = np.zeros(n, dtype=complex)
+        data  = {sig: iq[:, np.newaxis]}
+        axis  = {"x": {"def": x}}
+        other = {"signal": sig, "qubits": [qubit]}
 
     _rid_counter += 1
-    rid = _rid_counter
-    _data_store[rid] = {'x': x, 'y': result, 'config': dict(rcp._params)}
-    return RecipeResult(name=rcp._name, x=x, y=result, rid=rid)
+    result = {
+        "data": data,
+        "meta": {
+            "axis":  axis,
+            "other": other,
+        },
+    }
+    _data_store[_rid_counter] = result
+    return TaskResult(rid=_rid_counter, result_dict=result)
 
 
-# ── Data retrieval stubs ──────────────────────────────────────────────────────
+# ── Data retrieval ────────────────────────────────────────────────────────────
 
 def get_data_by_rid(rid: int) -> dict | None:
     return _data_store.get(rid, None)
 
 
 def get_config_by_rid(rid: int) -> dict:
-    entry = _data_store.get(rid, {})
-    return entry.get('config', {})
+    return {}
 
 
-def preview(cmds, **kwargs):
-    """Stub for waveform preview — returns empty dict."""
+def preview(cmds, **kwargs) -> dict:
+    """Stub — waveform preview not available in simulator mode."""
     return {}
 
 
 def rollback(rid: int):
-    """Stub for config rollback."""
     print(f"[mock_quark] rollback to rid={rid} (no-op in simulator mode)")
 
 
@@ -208,7 +275,7 @@ def lookup(key: str):
 
 def install():
     """
-    Inject mock modules into sys.modules so that::
+    Inject mock modules into ``sys.modules`` so that::
 
         from quark.app import Recipe, s, get_data_by_rid
 
@@ -219,6 +286,7 @@ def install():
 
     quark_app.s                 = s
     quark_app.Recipe            = Recipe
+    quark_app.TaskResult        = TaskResult
     quark_app.get_data_by_rid   = get_data_by_rid
     quark_app.get_config_by_rid = get_config_by_rid
     quark_app.preview           = preview

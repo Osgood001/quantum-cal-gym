@@ -13,6 +13,8 @@ dependencies = [
     "gymnasium>=0.29",
     "numpy>=1.24",
     "matplotlib>=3.7",
+    "qutip>=5.0",
+    "scqubits>=4.0",
 ]
 
 [project.urls]

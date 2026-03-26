@@ -16,7 +16,7 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from .qubit_sim import (
-    SuperconductingQubit,
+    TransmonSim,
     FREQ_LO, FREQ_HI, FREQ_SPAN_MIN, FREQ_SPAN_MAX,
     TIME_MIN, TIME_MAX, AMP_PI_RANGE,
 )
@@ -89,7 +89,7 @@ class QubitCalibrationEnv(gym.Env):
             'state':     spaces.Box(-np.inf, np.inf,  shape=(9,),        dtype=np.float32),
         })
 
-        self._qubit: SuperconductingQubit | None = None
+        self._qubit: TransmonSim | None = None
         self._step_count  = 0
         self._estimates   = {k: 0.0 for k in PARAM_NAMES}
         self._calibrated  : set[str] = set()
@@ -99,7 +99,7 @@ class QubitCalibrationEnv(gym.Env):
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
-        self._qubit       = SuperconductingQubit(seed=seed)
+        self._qubit       = TransmonSim(seed=seed)
         self._step_count  = 0
         self._estimates   = {k: 0.0 for k in PARAM_NAMES}
         self._calibrated  = set()
